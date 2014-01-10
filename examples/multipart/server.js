@@ -1,12 +1,18 @@
 // based on https://github.com/visionmedia/express/blob/master/examples/multipart/index.js
 var http = require("http")
-var os = require("os")
 var fs = require("fs")
-var path = require("path")
 var util = require("util")
 var Router = require("routes-router")
 var sendHtml = require("send-data/html")
-var MultipartyForm = require("./multiparty-form.js")
+var MultipartForm = require("./multipart-form.js")
+
+// Configure a form parser to place any files into a temporary directory.
+// You should avoid making the temporary directory accessible from the web to
+// prevent potential code injection attacks. Ensure the directory has
+// read/write permissions for the node process user and no execute permission.
+var form = MultipartForm({
+
+})
 
 var app = Router()
 
@@ -20,21 +26,19 @@ app.addRoute("/", {
             "</form>")
     },
     POST: function (req, res, opts, cb) {
-        // we tell the multi part form parser what to do with 
-        // each part it comes across. In this case we are storing
-        // them to disk using `storeFile`
-        MultipartyForm(req, res, {
-            handlePart: storeFile
-        }, function (err, values) {
+        // Parse the multipart form, storing any files to the specified
+        // (or temporary) location. Callback will contain the posted form fields
+        form(req, res, null, function (err, fields) {
             if (err) {
                 return cb(err)
             }
 
-            // fields are all the non file inputs in the form
-            var title = values.fields.title
-            // image is a { location, filename } object returned
-            // by storeFile
-            var image = values.files.image
+            // The title field is a string on the fields object
+            var title = fields.title
+
+            // The image field is an object representation
+            // { }
+            var image = fields.image
 
             // stat the file to figure out how large it is
             fs.stat(image.location, function (err, stat) {
@@ -48,9 +52,11 @@ app.addRoute("/", {
                     image.location,
                     title)
 
-                // cool now lets get rid of that file or 
-                // we accumulate garbage forever
-                // in production you should upload to s3 or something
+                // We will now remove the file from the temporary directory.
+                // In production you should upload to s3 or move to a permanent
+                // location after checking the file contents. Again, if you move
+                // the file to a directory, you should ensure that file
+                // permissions for the user are appropriate.
                 fs.unlink(image.location, function (err) {
                     if (err) {
                         return cb(err)
@@ -62,38 +68,6 @@ app.addRoute("/", {
         })
     }
 })
-
-function storeFile(part, callback) {
-    // we have an file stream lets save it to disk!!
-    // multiparty-form does not save to disk for you.
-    // if it does so then that's a disk overload attack vector
-
-    var filename = part.filename
-    var uploadsDir = path.join(os.tmpdir(), Math.random().toString(32))
-    var loc = path.join(uploadsDir, path.basename(filename))
-
-    // WAIT up. we need to create the uploadsDir
-    // the uploadsDir is a random directory which allows concurrent
-    // uploads of files with the same filename
-    fs.mkdir(uploadsDir, function (err) {
-        if (err) {
-            return callback(err)
-        }
-
-        // ok we're good let's store the image
-        var dest = fs.createWriteStream(loc)
-        part.pipe(dest)
-        
-        // once we have finished uploading
-        dest.once("finish", function () {
-            // lets callback with the location
-            callback(null, {
-                location: loc,
-                filename: filename
-            })
-        })
-    })
-}
 
 var server = http.createServer(app)
 server.listen(3000)
